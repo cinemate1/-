@@ -2,32 +2,44 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <title>Pink Gold Xmas Tree - High Brightness</title>
+    <title>Pink Gold Cone Tree - Corrected Star</title>
+    <link href="https://fonts.googleapis.com/css2?family=Great+Vibes&display=swap" rel="stylesheet">
     <style>
-        body { margin: 0; overflow: hidden; background: #050204; font-family: 'Helvetica Neue', sans-serif; }
+        body { margin: 0; overflow: hidden; background: #000; }
         #container { width: 100vw; height: 100vh; }
-        #ui {
-            position: absolute; top: 30px; left: 30px; color: #e0bfb8;
-            text-shadow: 0 0 15px rgba(224, 191, 184, 0.6); pointer-events: none; z-index: 10;
+
+        /* 连笔花体字样式 */
+        #title-overlay {
+            position: absolute;
+            bottom: 12%;
+            left: 50%;
+            transform: translateX(-50%);
+            text-align: center;
+            pointer-events: none;
+            z-index: 10;
+            width: 100%;
         }
-        canvas#output_canvas { position: absolute; bottom: 20px; right: 20px; width: 180px; height: 135px; border-radius: 12px; border: 1px solid #e0bfb8; transform: scaleX(-1); opacity: 0.6; }
-        .loading { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #000; color: #e0bfb8; display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 100; }
+
+        h1 {
+            font-family: 'Great Vibes', cursive;
+            font-size: 5.5em;
+            margin: 0;
+            font-weight: normal;
+            background: linear-gradient(to bottom, #ffd700, #ff8c00);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            filter: drop-shadow(0 0 20px rgba(255, 215, 0, 0.6));
+            letter-spacing: 3px;
+        }
     </style>
 </head>
 <body>
 
-<div id="loading" class="loading">
-    <div>✨ 正在点亮 15000 颗高亮粒子...</div>
-    <div style="font-size: 12px; margin-top: 10px; opacity: 0.6;">首次加载 AI 模型约需 10 秒</div>
-</div>
-
-<div id="ui">
-    <h1 style="font-size: 2em; margin: 0; letter-spacing: 2px; color: #ffccaa;">Merry Christmas</h1>
-    <p id="gesture-hint" style="opacity: 0.8;">等待手势启动 (✊合拢 🖐️散开)</p>
+<div id="title-overlay">
+    <h1>Merry Christmas</h1>
 </div>
 
 <div id="container"></div>
-<canvas id="output_canvas"></canvas>
 
 <script type="importmap">
 {
@@ -40,261 +52,230 @@
 
 <script type="module">
 import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
-import { FontLoader } from 'three/addons/loaders/FontLoader.js';
-import { TextGeometry } from 'three/addons/geometries/TextGeometry.js';
-import { FilesetResolver, HandLandmarker } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0";
 
-// --- 配置 ---
 const CONFIG = {
     colors: {
-        pinkGold: 0xffb6c1, // 亮粉色
-        roseGold: 0xe0bfb8, // 玫瑰金
-        gold: 0xffd700,     // 纯金
-        orange: 0xffaa00,   // 亮橙
-        bg: 0x050204        // 极深背景
+        pinkBright: 0xff1493, // 亮粉
+        pinkLight: 0xff69b4,  // 浅粉
+        pinkSoft: 0xffb6c1,   // 柔粉
+        gold: 0xffd700,       // 金色
+        orange: 0xff8c00      // 橙色(点缀)
     },
-    particleCount: 15000,
-    treeHeight: 14,
-    baseRadius: 6
+    particleCount: 20000,
+    treeHeight: 18,     // 树高
+    baseRadius: 6.5     // 底部半径
 };
 
-let scene, camera, renderer, composer, handLandmarker;
-let star, particleSystem, textMesh;
-let currentState = 'CLOSE';
-let targetRot = { x: 0, y: 0 }, curRot = { x: 0, y: 0 };
+let scene, camera, renderer, composer, controls;
+let particleSystem, starMesh;
 
-async function init() {
+init();
+
+function init() {
+    // 1. 场景
     scene = new THREE.Scene();
-    scene.background = new THREE.Color(CONFIG.colors.bg);
-    scene.fog = new THREE.Fog(CONFIG.colors.bg, 10, 60);
+    scene.background = new THREE.Color(0x000000);
+    scene.fog = new THREE.FogExp2(0x000000, 0.03); // 雾化增强景深
 
+    // 2. 相机
     camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 1000);
-    camera.position.set(0, 2, 22); // 相机视角微调
+    camera.position.set(0, 5, 28);
 
+    // 3. 渲染器
     renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "high-performance" });
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    // 使用 ACESFilmic 色调映射，可以更好地处理高亮颜色
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.0;
     document.getElementById('container').appendChild(renderer.domElement);
 
-    // --- 后期处理：超亮辉光 ---
+    // 4. 后期辉光
     const renderPass = new RenderPass(scene, camera);
-    // 强度调至 2.5，半径 0.6，阈值 0.2 (让更多暗部粒子也能发光)
-    const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.0, 0.6, 0.2);
+    const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 2.0, 0.5, 0.1);
     composer = new EffectComposer(renderer);
     composer.addPass(renderPass);
     composer.addPass(bloomPass);
 
-    // 增加环境光照亮文字
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
-    scene.add(ambientLight);
+    // 5. 控制器
+    controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.autoRotate = true;
+    controls.autoRotateSpeed = 1.0;
+    controls.target.set(0, CONFIG.treeHeight * 0.4, 0);
 
-    // 增加一束聚光灯照亮中间的文字
-    const spotLight = new THREE.SpotLight(0xffeebb, 10);
-    spotLight.position.set(0, 10, 10);
-    spotLight.lookAt(0, 0, 0);
-    scene.add(spotLight);
+    // 6. 创建物体
+    createStraightStar(); // 正星星
+    createConeTree();     // 圆锥树
 
-    createStar();
-    createParticles();
-    createCenterText(); // 改名为创建居中文字
-    await initHandTracking();
+    // 地面反光
+    const groundGeo = new THREE.PlaneGeometry(200, 200);
+    const groundMat = new THREE.MeshBasicMaterial({ color: 0xff1493, transparent: true, opacity: 0.05 });
+    const ground = new THREE.Mesh(groundGeo, groundMat);
+    ground.rotation.x = -Math.PI / 2;
+    ground.position.y = -1; // 略微下移
+    scene.add(ground);
 
-    document.getElementById('loading').style.display = 'none';
+    window.addEventListener('resize', onWindowResize);
     animate();
 }
 
-// 1. 固定不动的星星
-function createStar() {
+// --- 修改 1：摆正的星星 ---
+function createStraightStar() {
     const shape = new THREE.Shape();
-    const spikes = 5, outer = 1.0, inner = 0.45;
+    const spikes = 5;
+    const outerRadius = 1.6;
+    const innerRadius = 0.7;
+
     for (let i = 0; i < spikes * 2; i++) {
-        let r = i % 2 === 0 ? outer : inner;
-        let a = (i / (spikes * 2)) * Math.PI * 2 - Math.PI / 2;
-        if (i === 0) shape.moveTo(Math.cos(a) * r, Math.sin(a) * r);
-        else shape.lineTo(Math.cos(a) * r, Math.sin(a) * r);
+        const r = (i % 2 === 0) ? outerRadius : innerRadius;
+        // 修改：+ Math.PI / 2 确保第一个角垂直向上 (12点钟方向)
+        const angle = (i / (spikes * 2)) * Math.PI * 2 + Math.PI / 2;
+
+        const x = Math.cos(angle) * r;
+        const y = Math.sin(angle) * r;
+
+        if (i === 0) shape.moveTo(x, y);
+        else shape.lineTo(x, y);
     }
-    const geometry = new THREE.ExtrudeGeometry(shape, { depth: 0.2, bevelEnabled: true, bevelSize: 0.05 });
+
+    const extrudeSettings = {
+        depth: 0.4,
+        bevelEnabled: true,
+        bevelThickness: 0.1,
+        bevelSize: 0.1,
+        bevelSegments: 2
+    };
+
+    const geometry = new THREE.ExtrudeGeometry(shape, extrudeSettings);
+    // 材质：高亮金色
     const material = new THREE.MeshStandardMaterial({
         color: CONFIG.colors.gold,
-        metalness: 1.0, roughness: 0.1,
-        emissive: CONFIG.colors.gold, emissiveIntensity: 2.0 // 星星亮度
+        emissive: CONFIG.colors.gold,
+        emissiveIntensity: 3.5,
+        roughness: 0.1,
+        metalness: 1.0
     });
-    star = new THREE.Mesh(geometry, material);
-    star.position.y = CONFIG.treeHeight * 0.5 + 0.5;
-    // 稍微修正角度让它正对前方，且不再在 animate 中旋转
-    star.rotation.z = 0;
-    scene.add(star);
+
+    starMesh = new THREE.Mesh(geometry, material);
+    // 位置：树顶
+    starMesh.position.y = CONFIG.treeHeight + 0.5;
+    // 确保不旋转 Z 轴
+    starMesh.rotation.z = 0;
+    scene.add(starMesh);
+
+    // 增加点光源
+    const light = new THREE.PointLight(CONFIG.colors.gold, 2, 15);
+    light.position.set(0, 0, 1);
+    starMesh.add(light);
 }
 
-// 2. 居中的粉金艺术字
-function createCenterText() {
-    const loader = new FontLoader();
-    // 使用 Optimer 字体，比默认的更有艺术感，接近手写风格
-    loader.load('https://unpkg.com/three@0.160.0/examples/fonts/optimer_bold.typeface.json', (font) => {
-        const textGeo = new TextGeometry('Merry Christmas', {
-            font: font,
-            size: 1.5, // 字体变大
-            height: 0.2,
-            curveSegments: 12,
-            bevelEnabled: true,
-            bevelThickness: 0.03,
-            bevelSize: 0.02
-        });
-        textGeo.center();
-
-        // 粉金材质
-        const textMat = new THREE.MeshStandardMaterial({
-            color: CONFIG.colors.pinkGold,
-            metalness: 0.9,
-            roughness: 0.1, // 像抛光金属一样光滑
-            emissive: CONFIG.colors.pinkGold,
-            emissiveIntensity: 0.8
-        });
-
-        textMesh = new THREE.Mesh(textGeo, textMat);
-        // 位置设置在 Y=0 (垂直居中), Z=4 (向外突出，避免被粒子完全淹没)
-        textMesh.position.set(0, 0, 4.5);
-        scene.add(textMesh);
-    });
-}
-
-// 3. 超亮粒子系统
-function createParticles() {
-    const pData = [];
-    const positions = new Float32Array(CONFIG.particleCount * 3);
-    const colors = new Float32Array(CONFIG.particleCount * 3);
-
-    const colorPalette = [
-        new THREE.Color(CONFIG.colors.pinkGold),
-        new THREE.Color(CONFIG.colors.gold),
-        new THREE.Color(CONFIG.colors.orange)
+// --- 修改 2：圆锥形粒子树 ---
+function createConeTree() {
+    const positions = [];
+    const colors = [];
+    const colorHelper = new THREE.Color();
+    const palette = [
+        CONFIG.colors.pinkBright,
+        CONFIG.colors.pinkLight,
+        CONFIG.colors.pinkSoft,
+        CONFIG.colors.gold,
+        CONFIG.colors.orange
     ];
-    const tempColor = new THREE.Color();
 
-    for (let i = 0; i < CONFIG.particleCount; i++) {
-        // 圆锥结构
-        const h = Math.random() * CONFIG.treeHeight - CONFIG.treeHeight * 0.5;
-        const r = (CONFIG.treeHeight * 0.5 - h) / CONFIG.treeHeight * CONFIG.baseRadius * (0.8 + Math.random() * 0.4);
+    for(let i = 0; i < CONFIG.particleCount; i++) {
+        // 1. 高度生成：线性分布，从 0 到 树高
+        const h = Math.random() * CONFIG.treeHeight;
+
+        // 2. 半径生成：标准的圆锥公式
+        // 底部半径最大，顶部半径趋近于0
+        const heightRatio = h / CONFIG.treeHeight; // 0(底) -> 1(顶)
+        const maxRadiusAtHeight = CONFIG.baseRadius * (1 - heightRatio);
+
+        // 使用 sqrt 保证粒子在圆截面内分布均匀，而不是聚集在中心
+        const r = maxRadiusAtHeight * Math.sqrt(Math.random());
+
+        // 3. 角度生成
         const a = Math.random() * Math.PI * 2;
 
-        const close = new THREE.Vector3(Math.cos(a) * r, h, Math.sin(a) * r);
-        const scatter = new THREE.Vector3((Math.random()-0.5)*45, (Math.random()-0.5)*45, (Math.random()-0.5)*45);
+        // 4. 坐标计算
+        // 加上一点点随机扰动(jitter)，让树看起来毛茸茸，不那么像数学模型
+        const jitter = 0.2;
+        const x = Math.cos(a) * r + (Math.random()-0.5) * jitter;
+        const y = h + (Math.random()-0.5) * jitter;
+        const z = Math.sin(a) * r + (Math.random()-0.5) * jitter;
 
-        pData.push({ close, scatter, current: close.clone(), phase: Math.random() * 10 });
+        positions.push(x, y, z);
 
-        positions[i*3] = close.x;
-        positions[i*3+1] = close.y;
-        positions[i*3+2] = close.z;
+        // 5. 颜色分配与高亮
+        const hex = palette[Math.floor(Math.random() * palette.length)];
+        colorHelper.setHex(hex);
 
-        // 颜色超亮处理
-        const colorIndex = Math.floor(Math.random() * colorPalette.length);
-        tempColor.copy(colorPalette[colorIndex]);
+        // HDR 高亮处理 (倍增亮度)
+        const brightness = 1.5 + Math.random() * 2.0;
+        colorHelper.multiplyScalar(brightness);
 
-        // 关键：将颜色数值乘以 2.0，使其在 ToneMapping 中表现为高亮发光体
-        tempColor.multiplyScalar(2.0 + Math.random() * 1.0);
-
-        colors[i*3] = tempColor.r;
-        colors[i*3+1] = tempColor.g;
-        colors[i*3+2] = tempColor.b;
+        colors.push(colorHelper.r, colorHelper.g, colorHelper.b);
     }
 
     const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+
+    // 圆形纹理
+    const canvas = document.createElement('canvas');
+    canvas.width = 32; canvas.height = 32;
+    const ctx = canvas.getContext('2d');
+    const grad = ctx.createRadialGradient(16,16,0,16,16,16);
+    grad.addColorStop(0, 'rgba(255,255,255,1)');
+    grad.addColorStop(0.5, 'rgba(255,255,255,0.8)');
+    grad.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0,0,32,32);
+    const texture = new THREE.CanvasTexture(canvas);
 
     const material = new THREE.PointsMaterial({
-        size: 0.05, // 粒子稍微变大一点点，增加可见度
+        size: 0.12,
+        map: texture,
         vertexColors: true,
         transparent: true,
-        opacity: 1.0, // 不透明度拉满
-        blending: THREE.AdditiveBlending, // 叠加发光
+        opacity: 0.95,
+        blending: THREE.AdditiveBlending,
         depthWrite: false
     });
 
     particleSystem = new THREE.Points(geometry, material);
-    particleSystem.userData.data = pData;
     scene.add(particleSystem);
 }
 
-async function initHandTracking() {
-    const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm");
-    handLandmarker = await HandLandmarker.createFromOptions(vision, {
-        baseOptions: { modelAssetPath: `https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task`, delegate: "GPU" },
-        runningMode: "VIDEO", numHands: 1
-    });
-    const video = document.createElement('video');
-    navigator.mediaDevices.getUserMedia({ video: true }).then(stream => {
-        video.srcObject = stream; video.play();
-        const detect = () => {
-            if (video.currentTime !== -1) {
-                const results = handLandmarker.detectForVideo(video, performance.now());
-                if (results.landmarks && results.landmarks.length > 0) {
-                    const marks = results.landmarks[0];
-                    const dist = Math.hypot(marks[8].x - marks[0].x, marks[8].y - marks[0].y);
-                    if (dist < 0.25) currentState = 'CLOSE';
-                    else {
-                        currentState = 'SCATTER';
-                        targetRot.y = (marks[8].x - 0.5) * 2;
-                        targetRot.x = (marks[8].y - 0.5) * 1.5;
-                    }
-                    document.getElementById('gesture-hint').innerText = currentState === 'CLOSE' ? "✨ 粒子凝聚..." : "🌌 粒子散开...";
-                }
-            }
-            requestAnimationFrame(detect);
-        };
-        detect();
-    });
-}
-
-function animate() {
-    const time = performance.now() * 0.001;
-    curRot.x += (targetRot.x - curRot.x) * 0.05;
-    curRot.y += (targetRot.y - curRot.y) * 0.05;
-    // 场景旋转
-    scene.rotation.set(curRot.x * 0.3, curRot.y, 0);
-
-    // 注意：已移除 star.rotation.z 的代码，星星现在是固定的
-
-    // 文字浮动效果 (上下轻微漂浮)
-    if(textMesh) {
-        textMesh.position.y = Math.sin(time) * 0.2;
-        textMesh.lookAt(camera.position); // 让文字始终稍微朝向相机，保证可读性
-    }
-
-    if (particleSystem) {
-        const positions = particleSystem.geometry.attributes.position.array;
-        const data = particleSystem.userData.data;
-        for (let i = 0; i < CONFIG.particleCount; i++) {
-            const p = data[i];
-            const target = currentState === 'CLOSE' ? p.close : p.scatter;
-            p.current.lerp(target, 0.06);
-            // 快速闪烁效果
-            const offset = Math.sin(time * 3 + p.phase) * 0.05;
-            positions[i*3] = p.current.x;
-            positions[i*3+1] = p.current.y + offset;
-            positions[i*3+2] = p.current.z;
-        }
-        particleSystem.geometry.attributes.position.needsUpdate = true;
-    }
-
-    composer.render();
-    requestAnimationFrame(animate);
-}
-
-window.addEventListener('resize', () => {
+function onWindowResize() {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
     composer.setSize(window.innerWidth, window.innerHeight);
-});
+}
 
-init();
+function animate() {
+    requestAnimationFrame(animate);
+    controls.update();
+
+    const time = Date.now() * 0.001;
+
+    // 粒子整体缓慢旋转
+    if(particleSystem) {
+        particleSystem.rotation.y = time * 0.1;
+    }
+
+    // 星星缓慢浮动 (不旋转，只上下浮动)
+    if(starMesh) {
+        starMesh.position.y = CONFIG.treeHeight + 0.5 + Math.sin(time * 2) * 0.1;
+    }
+
+    composer.render();
+}
 </script>
 </body>
 </html>
